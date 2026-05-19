@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import '../../domain/entities/text_block.dart' as domain;
 import '../../domain/entities/translation_history.dart';
 import '../../providers/camera_provider.dart';
 import '../../providers/history_provider.dart';
+import '../../providers/photo_capture_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/service_providers.dart';
 import '../overlays/text_overlay_painter.dart';
@@ -16,6 +18,7 @@ import '../widgets/common_widgets.dart';
 import '../widgets/translate_panel.dart';
 import 'history_screen.dart';
 import 'download_manager_screen.dart';
+import 'photo_text_screen.dart';
 
 class CameraScreen extends ConsumerStatefulWidget {
   const CameraScreen({super.key});
@@ -337,10 +340,9 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
             onTap: () => ref.read(cameraProvider.notifier).toggleFreeze(),
           ),
 
-          GlowIconButton(
-            icon: Icons.clear_all,
-            tooltip: 'Clear',
-            onTap: () => ref.read(cameraProvider.notifier).clearOcrResult(),
+          _CaptureButton(
+            isCapturing: camState.isCapturing,
+            onTap: () => _captureAndNavigate(context, ref),
           ),
 
           GlowIconButton(
@@ -362,6 +364,39 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _captureAndNavigate(BuildContext context, WidgetRef ref) async {
+    final path = await ref.read(cameraProvider.notifier).capturePhoto();
+    if (path == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not capture photo. Try again.')),
+        );
+      }
+      return;
+    }
+
+    ref.read(photoCaptureProvider.notifier).reset();
+
+    if (!context.mounted) return;
+
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => PhotoTextScreen(imagePath: path),
+        transitionsBuilder: (_, anim, __, child) => SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 1),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+          child: child,
+        ),
+      ),
+    );
+
+    await Future.delayed(const Duration(milliseconds: 150));
+    ref.read(photoCaptureProvider.notifier).processPhoto(File(path));
   }
 }
 
@@ -616,6 +651,104 @@ class _ActionButton extends StatelessWidget {
                   fontSize: 10,
                   fontWeight: FontWeight.w500,
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CaptureButton extends StatefulWidget {
+  final bool isCapturing;
+  final VoidCallback onTap;
+
+  const _CaptureButton({required this.isCapturing, required this.onTap});
+
+  @override
+  State<_CaptureButton> createState() => _CaptureButtonState();
+}
+
+class _CaptureButtonState extends State<_CaptureButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseCtrl;
+  late Animation<double> _pulseAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Capture photo & extract text',
+      child: GestureDetector(
+        onTap: widget.isCapturing ? null : widget.onTap,
+        child: AnimatedBuilder(
+          animation: _pulseAnim,
+          builder: (_, child) => Transform.scale(
+            scale: widget.isCapturing ? 0.9 : _pulseAnim.value,
+            child: child,
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                    width: 2,
+                  ),
+                ),
+              ),
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: widget.isCapturing
+                      ? const LinearGradient(
+                          colors: [Colors.grey, Colors.blueGrey])
+                      : AppTheme.primaryGradient,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.primary.withValues(alpha: 0.55),
+                      blurRadius: 18,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: widget.isCapturing
+                    ? const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.photo_camera_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
               ),
             ],
           ),
