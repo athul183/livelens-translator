@@ -20,6 +20,7 @@ class CameraState {
   final bool isProcessing;
   final bool isFrozen;
   final bool flashOn;
+  final bool isCapturing; // true while takePicture() is in progress
   final double zoomLevel;
   final double minZoom;
   final double maxZoom;
@@ -34,6 +35,7 @@ class CameraState {
     this.isProcessing = false,
     this.isFrozen = false,
     this.flashOn = false,
+    this.isCapturing = false,
     this.zoomLevel = 1.0,
     this.minZoom = 1.0,
     this.maxZoom = 4.0,
@@ -49,6 +51,7 @@ class CameraState {
     bool? isProcessing,
     bool? isFrozen,
     bool? flashOn,
+    bool? isCapturing,
     double? zoomLevel,
     double? minZoom,
     double? maxZoom,
@@ -63,6 +66,7 @@ class CameraState {
         isProcessing: isProcessing ?? this.isProcessing,
         isFrozen: isFrozen ?? this.isFrozen,
         flashOn: flashOn ?? this.flashOn,
+        isCapturing: isCapturing ?? this.isCapturing,
         zoomLevel: zoomLevel ?? this.zoomLevel,
         minZoom: minZoom ?? this.minZoom,
         maxZoom: maxZoom ?? this.maxZoom,
@@ -229,6 +233,32 @@ class CameraNotifier extends StateNotifier<CameraState> {
 
   void clearOcrResult() {
     state = state.copyWith(lastOcrResult: null);
+  }
+
+  /// Capture a still photo and return the saved [File].
+  /// Pauses the image stream briefly during capture to avoid conflicts.
+  Future<String?> capturePhoto() async {
+    final controller = state.controller;
+    if (controller == null || !controller.value.isInitialized) return null;
+    if (state.isCapturing) return null;
+
+    state = state.copyWith(isCapturing: true);
+    try {
+      // Stop live OCR stream momentarily
+      await controller.stopImageStream();
+      // Snap photo
+      final xFile = await controller.takePicture();
+      // Resume stream
+      _startFrameProcessing(controller);
+      state = state.copyWith(isCapturing: false);
+      return xFile.path;
+    } catch (e) {
+      debugPrint('[Camera] capturePhoto error: $e');
+      // Try to resume stream even on error
+      try { _startFrameProcessing(controller); } catch (_) {}
+      state = state.copyWith(isCapturing: false);
+      return null;
+    }
   }
 
   @override
